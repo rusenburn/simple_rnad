@@ -1,15 +1,18 @@
 import time
 import os
+import copy
 import torch as T
 from torch.distributions import Categorical
 import numpy as np
 from collections import deque
 from torch.optim import Adam
-from torch.nn.utils.clip_grad import clip_grad_norm_
+from torch.nn.utils.clip_grad import clip_grad_norm_,clip_grad_value_
 from typing import Callable,Sequence
 from rnad.algorithms.ppo.memory_buffer import MemoryBuffer
 from rnad.games.game import Game,VecGame
-from rnad.networks import ClippedActorResNetwork, PytorchNetwork,ActorResNetwork,CriticResNetwork
+from rnad.match import Match
+from rnad.networks import ActorLinearNetwork, ClippedActorResNetwork, CriticLinearNetwork, PytorchNetwork,ActorResNetwork,CriticResNetwork
+from rnad.players import NNPlayer, RandomPlayer
 
 EPS = 1e-8
 class PPO():
@@ -27,7 +30,9 @@ class PPO():
         critic_coef=0.5,
         max_grad_norm=0.5,
         normalize_adv=True,
-        decay_lr=True ) -> None:
+        decay_lr=True ,
+        testing_game_fn:Callable[[],Game]|None=None
+        ) -> None:
         pass
     
         self._vec_game = VecGame(game_fns)
@@ -59,13 +64,18 @@ class PPO():
         self._normalize_adv = normalize_adv
 
         self.memory_buffer = MemoryBuffer(self._observation_space,self._n_game_actions,self._n_workers,self._step_size)
-        self.actor : PytorchNetwork = ClippedActorResNetwork(self._observation_space,self._n_game_actions)
-        self.critic : PytorchNetwork = CriticResNetwork(self._observation_space)
+        if len(self._observation_space) > 2:
+            self.actor : PytorchNetwork = ActorResNetwork(self._observation_space,self._n_game_actions)
+            self.critic : PytorchNetwork = CriticResNetwork(self._observation_space)
+        else:
+            self.actor : PytorchNetwork = ActorLinearNetwork(self._observation_space,self._n_game_actions)
+            self.critic : PytorchNetwork = CriticLinearNetwork(self._observation_space)
         
         self.actor_optim = Adam(self.actor.parameters(),lr=lr,eps=EPS)
         self.critic_optim = Adam(self.critic.parameters(),lr=lr,eps=EPS)
 
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
+        self.testing_game_fn = testing_game_fn
     
 
     def run(self)->None:
@@ -94,8 +104,13 @@ class PPO():
         explained_variances = deque(maxlen=100)
 
         log_interval = 10000
+        test_interval = 50000
         next_log = log_interval 
-
+        next_test = test_interval
+        previous = copy.deepcopy(self.actor)
+        test_previous_win_ratio : float|None = None
+        random_win_ratio : float|None = None
+        
         for iteration in range(1,int(self._total_steps//self._n_workers)+1):
             actions ,log_probs,values = self._choose_actions(partial_observations,full_observations,legal_actions_masks)
 
@@ -117,7 +132,6 @@ class PPO():
             full_observations = new_full_obs
             players = new_players
             legal_actions_masks = new_legal_actions_masks
-
             if iteration % self._step_size == 0:
                 with T.no_grad():
                     last_values_t :T.Tensor= self.critic(T.tensor(full_observations,dtype=T.float32,device=self.device))
@@ -138,6 +152,12 @@ class PPO():
                     "tmp", "critic_optim.pt"))
                 
                 # if iteration*self._n_workers % 1_000 < self._n_workers:
+                if iteration*self._n_workers >= next_test:
+                    next_test += test_interval
+                    test_previous_win_ratio = self._pit(self.actor,previous,100)
+                    random_win_ratio = self._pit(self.actor,None,100)
+                    previous.load_state_dict(self.actor.state_dict())
+
                 if iteration*self._n_workers >= next_log:
                     next_log += log_interval
                     total_duration = time.perf_counter()-t_start
@@ -160,6 +180,12 @@ class PPO():
                     print(f"Policy Loss:    {p_loss:0.3f}")
                     print(f"Entropy:        {ent:0.3f}")
                     print(f"E-Var-ratio:    {explained_variance:0.3f}")
+                    if test_previous_win_ratio is not None:
+                        print(f"Test-win-ratio: {test_previous_win_ratio:0.3f}")
+                        test_previous_win_ratio = None
+                    if random_win_ratio is not None:
+                        print(f"Random-w-ratio: {random_win_ratio:0.3f}")
+                        random_win_ratio = None
 
                     value_losses.clear()
                     policy_losses.clear()
@@ -176,10 +202,15 @@ class PPO():
         partial_obs_t = T.tensor(partial_observations,dtype=T.float32,device=self.device)
         full_obs_t = T.tensor(full_observations,dtype=T.float32,device=self.device)
         legal_actions_masks_t = T.tensor(legal_actions_masks,dtype=T.int32,device=self.device)
+        probs:T.Tensor
         with T.no_grad():
-            probs:T.Tensor = self.actor(partial_obs_t)
+            x = self.actor(partial_obs_t)
             values:T.Tensor = self.critic(full_obs_t)
         
+        if isinstance(x,tuple):
+            probs,_ = x
+        else:
+            probs = x
         legal_probs = probs * legal_actions_masks_t
         legal_probs[(legal_probs<0.003).logical_and(legal_probs>0)] = EPS
         legal_probs /= legal_probs.sum(dim=-1,keepdim=True)
@@ -254,9 +285,10 @@ class PPO():
                 else:
                     advantages_tensor = all_advantages_tensor[batch].clone()
                 
-                probs:T.Tensor = self.actor(partial_obs_tensor)
 
-                # TODO : DEBUG
+                probs : T.Tensor
+                probs  = self.actor(partial_obs_tensor)
+
                 # nans= probs.isnan()
                 # probs = probs*legal_action_masks_tensor
                 # probs /= probs.sum(dim=-1,keepdim=True)
@@ -289,15 +321,19 @@ class PPO():
 
                 total_loss.backward()
 
+                
+
                 if self._max_grad_norm:
+                    clip_grad_value_(self.actor.parameters(),10000)
                     clip_grad_norm_(self.actor.parameters(),
                                     max_norm=self._max_grad_norm)
+                    
+                    clip_grad_value_(self.critic.parameters(),10000)
                     clip_grad_norm_(self.critic.parameters(),
                                     max_norm=self._max_grad_norm)
                 
                 self.actor_optim.step()
                 self.critic_optim.step()
-
                 with T.no_grad():
                     value_loss_info[epoch,i] = critic_loss.clone()
                     policy_loss_info[epoch,i] = actor_loss.clone()
@@ -350,3 +386,18 @@ class PPO():
 
         advantages_tensor = T.tensor(adv_arr.flatten(),dtype=T.float32,device=self.device)
         return advantages_tensor
+    def _pit(self,net_1:PytorchNetwork,net_2:PytorchNetwork|None,n_sets:int)->float|None:
+        if self.testing_game_fn is None:
+            return None
+        testing_game_fn = self.testing_game_fn
+        player_2 = RandomPlayer() if net_2 is None else NNPlayer(net_2)
+        match_ = Match(testing_game_fn,NNPlayer(net_1),player_2,n_sets=n_sets)
+        score = match_.start()
+        return (score[0]*2 + score[1]) / score.sum() / 2
+
+def hook_pi(pi:T.Tensor,lr:float):
+    def grad_fn(grad:T.Tensor):
+        with T.no_grad():
+            grad = (pi - T.clamp(grad*lr+pi ,-2.0,2.0))/lr
+    hook = pi.register_hook(grad_fn)
+    return hook

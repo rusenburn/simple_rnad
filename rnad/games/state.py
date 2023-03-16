@@ -57,4 +57,8 @@ class State(ABC):
     def new_state()->'State':
         raise NotImplementedError()
     
+    @abstractmethod
+    def render(self,full:bool)->None:
+        raise NotImplementedError()
+    
     

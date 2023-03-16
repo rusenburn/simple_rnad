@@ -1,16 +1,17 @@
-import numpy as np
 from rnad.games.game import Game
-from .state import PhantomTicTacToeState
+import numpy as np
+from .state import GoofSpielState
 
-class PhantomTicTacToeGame(Game):
+class GoofSpielGame(Game):
     def __init__(self) -> None:
         super().__init__()
-        self._state = PhantomTicTacToeState.new_state()
+        self._state = GoofSpielState.new_state()
     
-    def step(self, action: int) -> PhantomTicTacToeState:
+    def step(self, action: int) -> GoofSpielState:
         self._state = self._state.step(action)
         return self._state
-    
+
+
     @property
     def n_actions(self) -> int:
         return self._state.n_actions
@@ -23,8 +24,8 @@ class PhantomTicTacToeGame(Game):
     def player_turn(self) -> int:
         return self._state.player_turn
         
-    def reset(self) -> PhantomTicTacToeState:
-        self._state = PhantomTicTacToeState.new_state()
+    def reset(self) -> GoofSpielState:
+        self._state = GoofSpielState.new_state()
         return self._state
 
 
@@ -36,6 +37,3 @@ class PhantomTicTacToeGame(Game):
 
     def render(self, full: bool):
         self._state.render(full)
-    
-    
-

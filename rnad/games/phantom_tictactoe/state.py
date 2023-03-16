@@ -209,7 +209,68 @@ class PhantomTicTacToeState(State):
         board_short = board_short.flatten()
         self._cached_full_short = (self._player_turn,self._turn,*board_short)
         return self._cached_full_short
+
+    def render(self, full: bool) -> None:
+        if full:
+            self._render_full()
+        else:
+            self._render_player(self._player_turn)
+
+    def _render_full(self)->None:
+        if self._player_turn == 0:
+            player_rep = "x"
+        else:
+            player_rep = "o"
+        result :list[str]= []
+        result.append("****************************\n")
+        result.append(f"*** Player {player_rep} has to move ***\n")
+        result.append("****************************\n")
+        result.append("\n")
+        for row in range(N_ROWS):
+            for col in range(N_COLS):
+                if self._board[0][row][col] == 1:
+                    result.append(" x ")
+                elif self._board[1][row][col] == 1:
+                    result.append(" o ")
+                else:
+                    result.append(" . ")
+                if col == N_COLS-1:
+                    result.append("\n")
+        result.append("\n")
+        print("".join(result))
+
+    def _render_player(self,player:int)->None:
+        if self._player_turn == 0:
+            player_rep = "x"
+        else:
+            player_rep = "o"
         
+        result :list[str]= []
+        result.append("****************************\n")
+        result.append(f"*** Player {player_rep} has to move ***\n")
+        result.append("****************************\n")
+        result.append("\n")
+        
+        if player == 0:
+            player_rep = " x "
+        else:
+            player_rep = " o "
+        if player == self._player_turn:
+            board = self._player_board
+        else:
+            board = self._opponent_board        
+        for row in range(N_ROWS):
+            for col in range(N_COLS):
+                if board[0][row][col] == 1:
+                    result.append(player_rep)
+                else:
+                    result.append(" . ")
+                if col == N_COLS-1:
+                    result.append("\n")
+            
+        result.append("\n")
+        print("".join(result))
+
     def _is_draw(self)->bool:
         # Note: check if we have a winner first
         return self._turn == MAX_TURNS

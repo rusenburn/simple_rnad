@@ -28,9 +28,9 @@ class NNPlayer(PlayerBase):
         
         probs_ar:np.ndarray = probs.cpu().numpy()[0]
         legal_actions_masks = state.legal_actions_masks()
-        probs_ar = probs_ar * legal_actions_masks
-        probs_ar /= probs_ar.sum()
-        action = np.random.choice(len(probs_ar),p=probs_ar)
+        masked_probs_ar = probs_ar * legal_actions_masks
+        fixed_probs_ar = masked_probs_ar / masked_probs_ar.sum()
+        action = np.random.choice(len(fixed_probs_ar),p=fixed_probs_ar)
         return action
 
 
@@ -62,5 +62,18 @@ class RandomPlayer(PlayerBase):
         legal_action = np.random.choice(len(legal_actions))
         action = legal_actions[legal_action]
         return action
+
+class HumanPlayer(PlayerBase):
+    def __init__(self,full:bool) -> None:
+        super().__init__()
+        self.full = full
+    
+    def choose_action(self, state: State) -> int:
+        state.render(self.full)
+        action = int(input("Enter your action:\n"))
+        return action
+    
+
+
 
 

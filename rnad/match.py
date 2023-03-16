@@ -36,7 +36,7 @@ class Match():
         current_player = 0
         while not done:
             if self.render:
-                ...
+                state.render(True)
             current_player = state.player_turn
             player = players[current_player]
             a = player.choose_action(state)
@@ -48,6 +48,8 @@ class Match():
             state = self.game.step(a)
             done = state.is_terminal()
         
+        if self.render:
+            state.render(True)
         rewards = self.game.game_result()
 
         if rewards[0] > rewards[1]:
@@ -56,7 +58,7 @@ class Match():
             scores = np.array([0,0,1])
         else:
             scores = np.array([0,1,0])
-        
+
         if starting_player != 0:
             scores = scores[::-1]
         return scores.copy()

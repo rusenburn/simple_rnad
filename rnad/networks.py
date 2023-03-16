@@ -39,6 +39,58 @@ class PytorchNetwork(nn.Module, NetworkBase):
 
 
 
+class ActorLinearNetwork(PytorchNetwork):
+    def __init__(self,shape:tuple,n_actions:int,fc_dims=512,blocks = 3) -> None:
+        super().__init__()
+
+        self._blocks = nn.ModuleList([LinearBlock(fc_dims) for _ in range(blocks)])
+
+        self._pi_head = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(shape[0]*shape[1],fc_dims),
+                nn.ReLU(),
+                *self._blocks,
+                nn.Linear(fc_dims,fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims,n_actions)
+                )
+        self._pi_head.to("cuda:0" if T.cuda.is_available() else "cpu")
+    
+    def forward(self,state:T.Tensor)->T.Tensor:
+        logits : T.Tensor= self._pi_head(state)
+        logits = logits.clamp(-3,3)
+        probs = logits.softmax(dim=-1)
+        return probs
+
+
+class CriticLinearNetwork(PytorchNetwork):
+    def __init__(self,shape:tuple,fc_dims=512,blocks = 3) -> None:
+        super().__init__()
+
+        self._blocks = nn.ModuleList([LinearBlock(fc_dims) for _ in range(blocks)])
+
+        self._v_head = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(shape[0]*shape[1],fc_dims),
+                nn.ReLU(),
+                *self._blocks,
+                nn.Linear(fc_dims,fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims,1),
+                nn.Tanh())
+        
+        # for _ in range(blocks):
+        #     self._v_head.append(nn.ReLU())
+        #     self._v_head.append(nn.Linear(fc_dims,fc_dims))
+        # self._v_head.append(nn.ReLU())
+        # self._v_head.append(nn.Linear(fc_dims,1))
+        # self._v_head.append(nn.Tanh())
+        self._v_head.to("cuda:0" if T.cuda.is_available() else "cpu")
+    
+    def forward(self,state:T.Tensor)->T.Tensor:
+        v : T.Tensor= self._v_head(state)
+        return v
+
 class ActorResNetwork(PytorchNetwork):
     def __init__(self,
                  shape: tuple,
@@ -141,6 +193,24 @@ class CriticResNetwork(PytorchNetwork):
         shared: T.Tensor = self._shared(state)
         value: T.Tensor = self._value_head(shared)
         return value
+
+class LinearBlock(nn.Module):
+    def __init__(self,dims:int) -> None:
+        super().__init__()
+        self._block = nn.Sequential(
+            nn.Linear(dims,dims),
+            nn.Linear(dims,dims),
+        )
+        self._se = LinearSE(dims,squeeze_rate=4)
+    
+    def forward(self,state:T.Tensor)->T.Tensor:
+        output :T.Tensor =  self._block(state)
+        output = self._se(output,state)
+        output += state
+        output = output.relu()
+        return output
+
+
 class ResBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
@@ -156,6 +226,24 @@ class ResBlock(nn.Module):
         output = self._se(output, initial)
         output += initial
         output = output.relu()
+        return output
+
+class LinearSE(nn.Module):
+    def __init__(self,dims:int,squeeze_rate:int) -> None:
+        super().__init__()
+        self.dims = dims
+        self._fcs = nn.Sequential(
+            nn.Linear(dims, int(dims//squeeze_rate)),
+            nn.ReLU(),
+            nn.Linear(int(dims//squeeze_rate), dims*2))
+        
+    def forward(self,state:T.Tensor , input_:T.Tensor)->T.Tensor:
+        prepared : T.Tensor = self._fcs(state)
+        splitted = prepared.split(self.dims,dim=1)
+        w :T.Tensor = splitted[0]
+        b : T.Tensor = splitted[1]
+        z = w.sigmoid()
+        output = input_ * z + b
         return output
 
 class SqueezeAndExcite(nn.Module):
