@@ -118,7 +118,7 @@ class SinglePlayerGame(Game):
         self.game.is_terminal()
         while not new_state.is_terminal() and self.game.player_turn != player:
             obs = new_state.to_player_obs()
-            obs_t = T.tensor(np.array([obs]),dtype=T.float32,device=self.device)
+            obs_t = T.tensor(np.array([obs],dtype=np.float32),dtype=T.float32,device=self.device)
             with T.no_grad():
                 probs:T.Tensor = self.nn(obs_t)
             probs_ar:np.ndarray = probs.cpu().numpy()[0]
@@ -151,11 +151,19 @@ class SinglePlayerGame(Game):
         while not new_state.is_terminal() and self.game.player_turn != player:
             obs = new_state.to_player_obs()
             obs_t = T.tensor(np.array([obs]),dtype=T.float32,device=self.device)
+            action_masks = new_state.legal_actions_masks()
+            # action_masks_t = T.tensor(np.array([action_masks]),dtype=T.int32,device=self.device)
             with T.no_grad():
                 probs:T.Tensor = self.nn(obs_t)
-            dist = Categorical(probs)
-            chosen_action = dist.sample()
-            ca = int(chosen_action.cpu().item())
+            # probs = probs*action_masks_t
+            # probs = probs / probs.sum(dim=-1,keepdim=True)
+            # dist = Categorical(probs)
+            # chosen_action = dist.sample()
+            probs_ar = probs.cpu().numpy()[0]
+            probs_ar = probs_ar * action_masks
+            probs_ar = probs_ar / probs_ar.sum(axis=-1,keepdims=True)
+            chosen_action = np.random.choice(len(probs_ar),p=probs_ar)
+            ca = int(chosen_action)
             new_state = self.game.step(ca)
         return new_state
 

@@ -25,7 +25,8 @@ class NNPlayer(PlayerBase):
         partial_observation_tensor = T.tensor(np.array([partial_observation]),dtype=T.float32,device=self.device)
         with T.no_grad():
             probs :T.Tensor= self.nnet(partial_observation_tensor)
-        
+        if isinstance(probs,tuple):
+            probs = probs[0]
         probs_ar:np.ndarray = probs.cpu().numpy()[0]
         legal_actions_masks = state.legal_actions_masks()
         masked_probs_ar = probs_ar * legal_actions_masks
@@ -60,7 +61,7 @@ class RandomPlayer(PlayerBase):
         masks = state.legal_actions_masks()
         legal_actions = np.argwhere(masks==1)
         legal_action = np.random.choice(len(legal_actions))
-        action = legal_actions[legal_action]
+        action = legal_actions[legal_action][0]
         return action
 
 class HumanPlayer(PlayerBase):

@@ -11,7 +11,7 @@ from typing import Callable,Sequence
 from rnad.algorithms.ppo.memory_buffer import MemoryBuffer
 from rnad.games.game import Game,VecGame
 from rnad.match import Match
-from rnad.networks import ActorLinearNetwork, ClippedActorResNetwork, CriticLinearNetwork, PytorchNetwork,ActorResNetwork,CriticResNetwork
+from rnad.networks import ActorClippedLinearNetwork, ActorLinearNetwork, ClippedActorResNetwork, CriticLinearNetwork, PytorchNetwork,ActorResNetwork,CriticResNetwork
 from rnad.players import NNPlayer, RandomPlayer
 
 EPS = 1e-8
@@ -31,9 +31,9 @@ class PPO():
         max_grad_norm=0.5,
         normalize_adv=True,
         decay_lr=True ,
-        testing_game_fn:Callable[[],Game]|None=None
+        testing_game_fn:Callable[[],Game]|None=None,
+        save_name:str|None = None
         ) -> None:
-        pass
     
         self._vec_game = VecGame(game_fns)
         self._n_workers = self._vec_game.n_games
@@ -76,6 +76,8 @@ class PPO():
 
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
         self.testing_game_fn = testing_game_fn
+
+        self.save_name = save_name if save_name is not None else ""
     
 
     def run(self)->None:
@@ -145,11 +147,12 @@ class PPO():
                 total_losses.append(total_loss)
                 explained_variances.append(explained_variance)
                 self.memory_buffer.reset()
-                self.actor.save_model(os.path.join("tmp", "actor.pt"))
-                self.critic.save_model(os.path.join("tmp","critic.pt"))
-                T.save(self.actor_optim, os.path.join("tmp", "actor_optim.pt"))
+
+                self.actor.save_model(os.path.join("tmp", f"{self.save_name}_actor.pt"))
+                self.critic.save_model(os.path.join("tmp",f"{self.save_name}_critic.pt"))
+                T.save(self.actor_optim, os.path.join("tmp", f"{self.save_name}_actor_optim.pt"))
                 T.save(self.critic_optim, os.path.join(
-                    "tmp", "critic_optim.pt"))
+                    "tmp", f"{self.save_name}_critic_optim.pt"))
                 
                 # if iteration*self._n_workers % 1_000 < self._n_workers:
                 if iteration*self._n_workers >= next_test:

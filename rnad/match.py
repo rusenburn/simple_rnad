@@ -52,10 +52,13 @@ class Match():
             state.render(True)
         rewards = self.game.game_result()
 
+        scores = np.array([0,0,0])
         if rewards[0] > rewards[1]:
-            scores = np.array([1,0,0])
+            # scores = np.array([1,0,0])
+            scores[0] = rewards[0]
         elif rewards[1]>rewards[0]:
-            scores = np.array([0,0,1])
+            # scores = np.array([0,0,1])
+            scores[-1] = rewards[1]
         else:
             scores = np.array([0,1,0])
 

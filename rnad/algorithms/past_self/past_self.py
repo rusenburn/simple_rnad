@@ -8,7 +8,7 @@ import numpy as np
 from collections import deque
 from torch.optim import Adam
 from rnad.games.game import Game, SinglePlayerGame, VecGame
-from rnad.networks import ActorLinearNetwork, ActorResNetwork, CriticLinearNetwork, CriticResNetwork, PytorchNetwork
+from rnad.networks import ActorClippedLinearNetwork, ActorLinearNetwork, ActorResNetwork, CriticLinearNetwork, CriticResNetwork, PytorchNetwork
 from rnad.algorithms.ppo.memory_buffer import MemoryBuffer
 import copy
 
@@ -29,7 +29,8 @@ class PastSelf(PPO):
         max_grad_norm=0.5,
         normalize_adv=True,
         decay_lr=True ,
-        testing_game_fn:Callable[[],Game]|None=None) -> None:
+        testing_game_fn:Callable[[],Game]|None=None,
+        save_name:str|None=None) -> None:
 
         self.device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
         g = game_fns[0]()
@@ -39,9 +40,9 @@ class PastSelf(PPO):
             self.actor : PytorchNetwork = ActorResNetwork(self._observation_space,self._n_game_actions)
             self.critic : PytorchNetwork = CriticResNetwork(self._observation_space)
         else:
-            self.actor : PytorchNetwork = ActorLinearNetwork(self._observation_space,self._n_game_actions)
+            self.actor : PytorchNetwork = ActorClippedLinearNetwork(self._observation_space,self._n_game_actions,blocks=3)
             self.critic : PytorchNetwork = CriticLinearNetwork(self._observation_space)
-        copies_count = len(game_fns)//2
+        copies_count = len(game_fns)//4
         nn_count = len(game_fns) - copies_count
         self.copies = [copy.deepcopy(self.actor).to(self.device) for _ in range(copies_count)]
         all_nns = [*self.copies]
@@ -81,6 +82,7 @@ class PastSelf(PPO):
         self.testing_game_fn = testing_game_fn
         self.set_enemy_interval = 10000
         self.next_nn_idx = 0
+        self.save_name = save_name if save_name is not None else ""
     
     def run(self)->None:
         t_start = time.perf_counter()
@@ -153,11 +155,11 @@ class PastSelf(PPO):
                 total_losses.append(total_loss)
                 explained_variances.append(explained_variance)
                 self.memory_buffer.reset()
-                self.actor.save_model(os.path.join("tmp", "actor.pt"))
-                self.critic.save_model(os.path.join("tmp","critic.pt"))
-                T.save(self.actor_optim, os.path.join("tmp", "actor_optim.pt"))
+                self.actor.save_model(os.path.join("tmp", f"{self.save_name}_actor.pt"))
+                self.critic.save_model(os.path.join("tmp",f"{self.save_name}_critic.pt"))
+                T.save(self.actor_optim, os.path.join("tmp", f"{self.save_name}_actor_optim.pt"))
                 T.save(self.critic_optim, os.path.join(
-                    "tmp", "critic_optim.pt"))
+                    "tmp", f"{self.save_name}_critic_optim.pt"))
                 
                 # if iteration*self._n_workers % 1_000 < self._n_workers:
                 if iteration*self._n_workers >= next_test:
