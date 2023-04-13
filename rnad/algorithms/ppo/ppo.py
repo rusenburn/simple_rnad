@@ -32,7 +32,8 @@ class PPO():
         normalize_adv=True,
         decay_lr=True ,
         testing_game_fn:Callable[[],Game]|None=None,
-        save_name:str|None = None
+        save_name:str|None = None,
+        normalize_rewards=True,
         ) -> None:
     
         self._vec_game = VecGame(game_fns)
@@ -62,6 +63,7 @@ class PPO():
         # Improvements
         self._max_grad_norm = max_grad_norm
         self._normalize_adv = normalize_adv
+        self._normalize_rewards = normalize_rewards
 
         self.memory_buffer = MemoryBuffer(self._observation_space,self._n_game_actions,self._n_workers,self._step_size)
         if len(self._observation_space) > 2:
@@ -85,7 +87,7 @@ class PPO():
         partial_observations : np.ndarray
         full_observations :np.ndarray
         players :np.ndarray
-
+        rewards_absolute_moving_average = 1
         partial_observations,full_observations,legal_actions_masks,players = self._vec_game.reset()
         total_iterations = int(self._total_steps//self._n_workers)
         if self._decay_lr:
@@ -117,6 +119,12 @@ class PPO():
             actions ,log_probs,values = self._choose_actions(partial_observations,full_observations,legal_actions_masks)
 
             new_partial_obs , new_full_obs ,new_legal_actions_masks,rewards , dones , new_players = self._vec_game.step(actions)
+
+            if self._normalize_rewards:
+                abs_rewards = np.abs(rewards).sum()
+                g = 0.001
+                rewards_absolute_moving_average = (1-g)*rewards_absolute_moving_average + abs_rewards*(g) + 1e-6
+                rewards = rewards / rewards_absolute_moving_average
 
             self.memory_buffer.save(
                 step_partial_observations=partial_observations,
@@ -215,12 +223,14 @@ class PPO():
         else:
             probs = x
         legal_probs = probs * legal_actions_masks_t
-        legal_probs[(legal_probs<0.003).logical_and(legal_probs>0)] = EPS
         legal_probs /= legal_probs.sum(dim=-1,keepdim=True)
-        legal_action_sample = Categorical(legal_probs)
+        legal_probs[(legal_probs<0.003).logical_and(legal_probs>0)] = EPS
+        legal_probs_1 =  legal_probs/ legal_probs.sum(dim=-1,keepdim=True)
+        legal_action_dist = Categorical(legal_probs_1)
         action_dist = Categorical(probs)
-        actions = legal_action_sample.sample()
-        log_probs :T.Tensor= action_dist.log_prob(actions)
+        actions = legal_action_dist.sample()
+        log_probs_original :T.Tensor= action_dist.log_prob(actions)
+        log_probs :T.Tensor= legal_action_dist.log_prob(actions)
         return actions.cpu().numpy(),log_probs.cpu().numpy(),values.squeeze(-1).cpu().numpy()
     
     def _train_network(self,last_values:np.ndarray,last_players:np.ndarray):
@@ -267,7 +277,11 @@ class PPO():
         all_returns_tensor = all_values_tensor + all_advantages_tensor
 
         explained_variance:float = self._calculate_explained_variance(all_values_tensor,all_returns_tensor)
-
+        # with T.no_grad():
+        #     all_old_dist_tensor:T.Tensor = self.actor(all_partiall_obs_tensor)
+        # all_old_dist_tensor = all_old_dist_tensor * all_legal_actions_masks_tensor
+        # all_old_dist_tensor /= all_old_dist_tensor.sum(dim=-1,keepdim=True)
+        # all_old_log_probs_tensor = all_old_dist_tensor[np.arange(len(actions_arr)),actions_arr]
         for epoch in range(self._n_epochs):
             batch_starts = np.arange(
                 0, self._n_workers*self._step_size, batch_size)
@@ -279,10 +293,12 @@ class PPO():
                 partial_obs_tensor = all_partiall_obs_tensor[batch]
                 full_obs_tensor = all_full_obs_tensor[batch]
                 old_log_probs_tensor = all_log_probs_tensor[batch]
+                # old_log_probs_tensor = all_old_log_probs_tensor[batch]
                 actions_tensor = all_actions_tensor[batch]
                 values_tensor = all_values_tensor[batch]
                 returns_tensor = all_returns_tensor[batch]
                 legal_action_masks_tensor = all_legal_actions_masks_tensor[batch]
+                # old_dist_tensor = all_old_dist_tensor[batch]
                 if self._normalize_adv:
                     advantages_tensor = normalized_advantages_tensor[batch].clone()
                 else:
@@ -293,12 +309,12 @@ class PPO():
                 probs  = self.actor(partial_obs_tensor)
 
                 # nans= probs.isnan()
-                # probs = probs*legal_action_masks_tensor
-                # probs /= probs.sum(dim=-1,keepdim=True)
+                fixed_prob = probs*legal_action_masks_tensor
+                fixed_prob /= fixed_prob.sum(dim=-1,keepdim=True)
                 critic_values : T.Tensor = self.critic(full_obs_tensor)
                 critic_values = critic_values.squeeze()
 
-                dist = Categorical(probs)
+                dist = Categorical(fixed_prob)
 
                 entropy : T.Tensor= dist.entropy().mean()
 
@@ -317,6 +333,8 @@ class PPO():
                 critic_loss_1 = (returns_tensor- critic_values)**2
                 critic_loss_2 = (returns_tensor-clipped_values_predictions)**2
                 critic_loss = 0.5 * T.max(critic_loss_1,critic_loss_2).mean()
+
+                
                 total_loss = actor_loss + self._critic_coef*critic_loss - self._entropy_coef * entropy
 
                 self.actor_optim.zero_grad()
@@ -343,10 +361,32 @@ class PPO():
                     entropies_info[epoch,i] = entropy.clone()
                     total_losses_info[epoch,i] = total_loss.clone()
         with T.no_grad():
+            # For KL-LOSS for legal actions
+            all_old_fixed_dist :T.Tensor = self.actor(all_partiall_obs_tensor)
+            all_old_fixed_dist = all_old_fixed_dist  * all_legal_actions_masks_tensor
+            all_old_fixed_dist = all_old_fixed_dist + EPS  # TO AVOID extreme log logits ( very high or very low ) 
+            all_old_fixed_dist /= all_old_fixed_dist.sum(dim=-1,keepdim=True)
+            all_old_fixed_dist = all_old_fixed_dist.detach()
+
             value_loss_mean = value_loss_info.flatten().mean()
             policy_loss_mean = policy_loss_info.flatten().mean()
             entropy_mean= entropies_info.flatten().mean()
             total_loss_mean = total_losses_info.flatten().mean()
+
+        # TRAIN actor for legal actions 
+        batch_starts = np.arange(
+            0, self._n_workers*self._step_size, batch_size)
+        indices = np.arange(self._n_workers*self._step_size, dtype=np.int32)
+        np.random.shuffle(indices)
+        batches =[indices[i:i+batch_size] for i in batch_starts]
+        for i , batch in enumerate(batches):
+            old_dist = all_old_fixed_dist[batch]
+            observation = all_partiall_obs_tensor[batch]
+            new_dist:T.Tensor = self.actor(observation)
+            kl_loss = T.nn.functional.kl_div(new_dist.log(),old_dist,reduction="batchmean").mean()
+            self.actor_optim.zero_grad()
+            kl_loss.backward()
+            self.actor_optim.step()
         return policy_loss_mean.cpu().item(),value_loss_mean.cpu().item(),entropy_mean.cpu().item(),total_loss_mean.cpu().item(),explained_variance
 
     def _calculate_explained_variance(self,predictions:T.Tensor,target:T.Tensor)->float:
@@ -379,10 +419,15 @@ class PPO():
                         next_val *=-1
                 
                 delta = current_reward + (self._gamma * next_val * (1-is_terminal)) - current_val
+                next_adv = adv_arr[worker][step+1]
+                if current_player !=next_player:
+                    next_adv = -next_adv
+                next_ = self._gamma* self._gae_lam * next_adv * (1-is_terminal)
+
                 # next_ = (self._gamma* self._gae_lam * adv_arr[worker][step+1] * (1-is_terminal))
                 # if current_player != next_player:
                 #     next_ = -next_
-                next_ = 0
+                # next_ = 0
                 adv_arr[worker][step] = delta + next_
         
         adv_arr = adv_arr[:,:-1]

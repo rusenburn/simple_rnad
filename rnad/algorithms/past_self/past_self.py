@@ -214,3 +214,42 @@ class PastSelf(PPO):
             actor_scheduler.step()
             critic_scheduler.step()
     
+    def _calculate_advantages(self,rewards:np.ndarray,values:np.ndarray,terminals:np.ndarray,players:np.ndarray,last_values:np.ndarray,last_players:np.ndarray):
+        adv_arr = np.zeros((self._n_workers,self._step_size+1),dtype=np.float32)
+        next_val : float
+        next_player : int
+        for worker in range(self._n_workers):
+            for step in  reversed(range(self._step_size)):
+                current_player = players[worker][step]
+                current_reward = rewards[worker][step][current_player]
+                current_val = values[worker][step]
+                is_terminal = int(terminals[worker][step])
+
+                if step == self._step_size-1 : # Last Step
+                    next_player = last_players[worker]
+                    next_val = last_values[worker]
+                    if current_player != next_player:
+                        next_val *=-1
+                else:
+                    next_player = players[worker][step+1]
+                    next_val = values[worker][step+1]
+                    if current_player != next_player:
+                        next_val *=-1
+                
+                delta = current_reward + (self._gamma * next_val * (1-is_terminal)) - current_val
+                next_adv:float = adv_arr[worker][step+1]
+                if current_player !=next_player and not is_terminal:
+                    next_adv = -next_adv
+                next_ = self._gamma* self._gae_lam * next_adv * (1-is_terminal)
+                
+                # next_ = (self._gamma* self._gae_lam * adv_arr[worker][step+1] * (1-is_terminal))
+                # if current_player != next_player:
+                #     next_ = -next_
+                # next_ = 0
+                adv_arr[worker][step] = delta + next_
+        
+        adv_arr = adv_arr[:,:-1]
+
+        advantages_tensor = T.tensor(adv_arr.flatten(),dtype=T.float32,device=self.device)
+        return advantages_tensor
+    

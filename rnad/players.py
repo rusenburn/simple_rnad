@@ -1,8 +1,9 @@
 from abc import ABC,abstractmethod
+from typing import Sequence
 import torch as T
 import numpy as np
 from .games.state import State
-from .networks import PytorchNetwork
+from .networks import PytorchNetwork,ActorNetwork
 class PlayerBase(ABC):
     def __init__(self) -> None:
         super().__init__()
@@ -53,6 +54,18 @@ class CheaterPlayer(PlayerBase):
         probs_ar /= probs_ar.sum()
         action = np.random.choice(len(probs_ar),p=probs_ar)
         return action
+
+class TurnBasedNNPlayer(PlayerBase):
+    def __init__(self,actors:Sequence[ActorNetwork]) -> None:
+        super().__init__()
+        self.actors = actors
+        self.players = [NNPlayer(actor) for actor in actors]
+    
+    def choose_action(self, state: State) -> int:
+        player = self.players[state.player_turn]
+        return player.choose_action(state)
+
+
 class RandomPlayer(PlayerBase):
     def __init__(self) -> None:
         super().__init__()

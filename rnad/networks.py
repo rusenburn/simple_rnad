@@ -39,6 +39,71 @@ class PytorchNetwork(nn.Module, NetworkBase):
         except:
             print(f'could not load nn from {path}')
 
+class ActorNetwork(PytorchNetwork):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def predict(self,observation:T.Tensor)->tuple[T.Tensor,T.Tensor]:
+        '''
+        returns a tuple containing action probabilities and logits
+        '''
+        raise NotImplementedError()
+
+class CriticNetwork(PytorchNetwork):
+    def __init__(self) -> None:
+        super().__init__()
+    
+    def evaluate(self,observation:T.Tensor)->T.Tensor:
+        '''
+        return the value of the observation
+        '''
+        raise NotImplementedError()
+        
+class ActorLinNetwork(ActorNetwork):
+    def __init__(self,shape:tuple,n_actions:int,fc_dims=512,n_blocks=5) -> None:
+        super().__init__()
+        self._blocks = nn.ModuleList(
+            LinearBlock(fc_dims) for _ in range(n_blocks)
+        )
+        self._pi_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(shape[0]*shape[1], fc_dims),
+            nn.ReLU(),
+            *self._blocks,
+            nn.Linear(fc_dims, fc_dims),
+            nn.ReLU(),
+            nn.Linear(fc_dims, n_actions))
+        self._pi_head.to("cuda:0" if T.cuda.is_available() else "cpu")
+    
+    def forward(self,observations:T.Tensor)->tuple[T.Tensor,T.Tensor]:
+        logits:T.Tensor = self._pi_head(observations)
+        probs = logits.softmax(-1)
+        return probs,logits
+
+    def predict(self, observation: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
+        return self(observation)
+    
+class CriticLinNetwork(CriticNetwork):
+    def __init__(self,shape:tuple,fc_dims=512,n_blocks=5) -> None:
+        super().__init__()
+        self._blocks = nn.ModuleList(
+            [LinearBlock(fc_dims) for _ in range(n_blocks)])
+
+        self._v_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(shape[0]*shape[1], fc_dims),
+            nn.ReLU(),
+            *self._blocks,
+            nn.Linear(fc_dims, fc_dims),
+            nn.ReLU(),
+            nn.Linear(fc_dims, 1))
+    
+    def forward(self,observation:T.Tensor)->T.Tensor:
+        v = self._v_head(observation)
+        return v
+
+    def evaluate(self, observation: T.Tensor) -> T.Tensor:
+        return self(observation)
 
 class ActorLinearNetwork(PytorchNetwork):
     def __init__(self, shape: tuple, n_actions: int, fc_dims=512, blocks=3) -> None:
@@ -60,7 +125,6 @@ class ActorLinearNetwork(PytorchNetwork):
 
     def forward(self, state: T.Tensor) -> T.Tensor:
         logits: T.Tensor = self._pi_head(state)
-        # logits = logits.clamp(-3, 3)
         probs = logits.softmax(dim=-1)
         return probs
 
@@ -87,7 +151,7 @@ class ActorClippedLinearNetwork(PytorchNetwork):
     def forward(self, state: T.Tensor) -> T.Tensor:
         logits: T.Tensor = self._pi_head(state)
         logits = logits * 3
-        # log its = logits.clamp(-3,3)
+        # logits = logits.clamp(-3,3)
         probs = logits.softmax(dim=-1)
         return probs
 
@@ -108,7 +172,7 @@ class CriticLinearNetwork(PytorchNetwork):
             nn.ReLU(),
             nn.Linear(fc_dims, 1),
             # nn.Tanh()
-            )
+        )
 
         self._v_head.to("cuda:0" if T.cuda.is_available() else "cpu")
 
@@ -116,7 +180,44 @@ class CriticLinearNetwork(PytorchNetwork):
         v: T.Tensor = self._v_head(state)
         return v
 
+class ActorRNetwork(ActorNetwork):
+    def __init__(self,
+                 shape: tuple,
+                 n_actions: int,
+                 filters=128,
+                 fc_dims=512,
+                 n_blocks=5) -> None:
+        super().__init__()
+    
+        self._blocks = nn.ModuleList(
+                [ResBlock(filters) for _ in range(n_blocks)])
 
+        self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 3, 1, 1),
+                *self._blocks)
+
+        self._pi_head = nn.Sequential(
+            nn.Conv2d(filters, filters, 3, 1, 1),
+            nn.Flatten(),
+            nn.Linear(shape[1]*shape[2]*filters, fc_dims),
+            nn.ReLU(),
+            nn.Linear(fc_dims, n_actions))
+
+        device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
+        self._blocks.to(device)
+        self._shared.to(device)
+        self._pi_head.to(device)
+
+    def forward(self, state: T.Tensor) -> tuple[T.Tensor,T.Tensor]:
+        shared: T.Tensor = self._shared(state)
+        logits: T.Tensor = self._pi_head(shared)
+        # pi = pi.clamp(-3,3)
+        probs: T.Tensor = logits.softmax(dim=-1)
+        return probs,logits
+
+    def predict(self, observation: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
+        return self(observation)
+    
 class ActorResNetwork(PytorchNetwork):
     def __init__(self,
                  shape: tuple,
@@ -129,9 +230,18 @@ class ActorResNetwork(PytorchNetwork):
         self._blocks = nn.ModuleList(
             [ResBlock(filters) for _ in range(n_blocks)])
 
-        self._shared = nn.Sequential(
-            nn.Conv2d(shape[0], filters, 3, 1, 1),
-            *self._blocks)
+        if shape[1] == 64:
+            self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 8, 4, 0),
+                *self._blocks)
+            shape = shape[0], 15, 13
+        else:
+            self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 3, 1, 1),
+                *self._blocks)
+        # self._shared = nn.Sequential(
+        #     nn.Conv2d(shape[0], filters, 3, 1, 1),
+        #     *self._blocks)
 
         self._pi_head = nn.Sequential(
             nn.Conv2d(filters, filters, 3, 1, 1),
@@ -148,6 +258,7 @@ class ActorResNetwork(PytorchNetwork):
     def forward(self, state: T.Tensor) -> T.Tensor:
         shared: T.Tensor = self._shared(state)
         pi: T.Tensor = self._pi_head(shared)
+        # pi = pi.clamp(-3,3)
         probs: T.Tensor = pi.softmax(dim=-1)
         return probs
 
@@ -188,7 +299,7 @@ class ClippedActorResNetwork(PytorchNetwork):
         return probs
 
 
-class CriticResNetwork(PytorchNetwork):
+class CriticResNetwork(CriticNetwork):
     def __init__(self,
                  shape: tuple,
                  filters=128,
@@ -199,7 +310,13 @@ class CriticResNetwork(PytorchNetwork):
         self._blocks = nn.ModuleList(
             [ResBlock(filters) for _ in range(n_blocks)])
 
-        self._shared = nn.Sequential(
+        if shape[1] == 64:
+            self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 8, 4, 0),
+                *self._blocks)
+            shape = shape[0], 15, 13
+        else:
+            self._shared = nn.Sequential(
             nn.Conv2d(shape[0], filters, 3, 1, 1),
             *self._blocks)
 
@@ -209,7 +326,7 @@ class CriticResNetwork(PytorchNetwork):
             nn.Linear(shape[1]*shape[2]*filters, fc_dims),
             nn.ReLU(),
             nn.Linear(fc_dims, 1),
-            nn.Tanh()
+            # nn.Tanh()
         )
 
         device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
@@ -221,6 +338,11 @@ class CriticResNetwork(PytorchNetwork):
         shared: T.Tensor = self._shared(state)
         value: T.Tensor = self._value_head(shared)
         return value
+
+    def evaluate(self, observation: T.Tensor) -> T.Tensor:
+        return self(observation)
+
+    
 
 
 class LinearBlock(nn.Module):
@@ -310,26 +432,44 @@ class SqueezeAndExcite(nn.Module):
 class RnadNetwork(nn.Module):
     def __init__(self, shape: tuple, n_actions: int, fc_dims=512, blocks=3) -> None:
         super().__init__()
+        if len(shape) > 2:
+            filters = 128
+            self._blocks = nn.ModuleList(
+            [ResBlock(filters) for _ in range(blocks)])
+            self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 3, 1, 1),
+                *self._blocks)
+            self._pi_head = nn.Sequential(
+                nn.Conv2d(filters, filters, 3, 1, 1),
+                nn.Flatten(),
+                nn.Linear(shape[1]*shape[2]*filters, fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims, n_actions))
+            self._v_head = nn.Sequential(
+                nn.Conv2d(filters, filters, 3, 1, 1),
+                nn.Flatten(),
+                nn.Linear(shape[1]*shape[2]*filters, fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims, 1),)
+        else:
 
-        self._blocks = nn.ModuleList(
-            [LinearBlock(fc_dims) for _ in range(blocks)])
-        self._shared = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(shape[0]*shape[1], fc_dims),
-            nn.ReLU(),
-            *self._blocks)
-        self._pi_head = nn.Sequential(
-            nn.Linear(fc_dims, fc_dims),
-            nn.ReLU(),
-            nn.Linear(fc_dims, n_actions),
-            nn.Tanh()
-
-        )
-        self._v_head = nn.Sequential(
-            nn.Linear(fc_dims, fc_dims),
-            nn.ReLU(),
-            nn.Linear(fc_dims, 1)
-        )
+            self._blocks = nn.ModuleList(
+                [LinearBlock(fc_dims) for _ in range(blocks)])
+            self._shared = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(shape[0]*shape[1], fc_dims),
+                nn.ReLU(),
+                *self._blocks)
+            self._pi_head = nn.Sequential(
+                nn.Linear(fc_dims, fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims, n_actions),
+            )
+            self._v_head = nn.Sequential(
+                nn.Linear(fc_dims, fc_dims),
+                nn.ReLU(),
+                nn.Linear(fc_dims, 1)
+            )
         self._shared.to("cuda:0" if T.cuda.is_available() else "cpu")
         self._pi_head.to("cuda:0" if T.cuda.is_available() else "cpu")
         self._v_head.to("cuda:0" if T.cuda.is_available() else "cpu")
@@ -337,7 +477,7 @@ class RnadNetwork(nn.Module):
     def forward(self, state: T.Tensor) -> tuple[T.Tensor, T.Tensor, T.Tensor, T.Tensor]:
         shared: T.Tensor = self._shared(state)
         logits: T.Tensor = self._pi_head(shared)
-        logits = logits*2
+        # logits = logits*2
         # logits = logits.clamp(-2,2)
         v = self._v_head(shared)
         probs = logits.softmax(dim=-1)

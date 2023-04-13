@@ -55,6 +55,7 @@ class VecGame:
         g = game_fns[0]()
         self._single_obs_space = g.observation_space
         self._n_actions = g.n_actions
+        self._states = []
         self.reset()
 
     def reset(self) -> tuple[np.ndarray, np.ndarray,np.ndarray,np.ndarray]:
@@ -63,6 +64,7 @@ class VecGame:
         full_obs = np.zeros((self._n_games, *self._single_obs_space), dtype=np.float32)
         players = np.zeros((self._n_games), dtype=np.int32)
         legal_actions_masks = np.zeros((self._n_games,self._n_actions),dtype=np.int32)
+        self._states : list[State] = []
         for i,game in enumerate(self.games):
             state = game.reset()
             player = game.player_turn
@@ -70,6 +72,7 @@ class VecGame:
             full_obs[i] = state.to_full_obs()
             players[i] = player
             legal_actions_masks[i] = state.legal_actions_masks()
+            self._states.append(state)
         return partial_obs,full_obs,legal_actions_masks,players
 
     def step(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray,np.ndarray, np.ndarray,np.ndarray, np.ndarray]:
@@ -94,11 +97,15 @@ class VecGame:
             full_obs[i] = state.to_full_obs()
             dones[i] = done
             players[i] = game.player_turn
+            self._states[i] = state
         return player_obs,full_obs, new_legal_actions_masks,rewards, dones, players
     
     @property
     def n_games(self)->int:
         return self._n_games
+
+    def get_state(self):
+        return self._states
 
 class SinglePlayerGame(Game):
     def __init__(self,game_fn:Callable[[],Game],nn:PytorchNetwork) -> None:
