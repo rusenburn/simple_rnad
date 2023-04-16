@@ -208,8 +208,10 @@ class TrixState(State):
         return self._cached_score.copy()
 
     def to_full_obs(self) -> np.ndarray:
-        # 52 X 10 (4players,2takes,4floors) 52 turns X 56 (52 Actions + 4players who took these actions)
-        # 10 X 56 + 52 X 56
+        # 62 X 56
+        # 10 X 56 , 10 => 4players+2takes+4floors , 56 => 52 cards + 4 paddings 
+        # 52 X 56 , 52 => 52 turns  , 56 => 52 for each possible Action + 4 for each player
+        # 10 X 56 + 52 X 56 = 62 X 56
         if self._cached_full_obs is not None:
             return self._cached_full_obs.copy()
         current_player = self._player_turn

@@ -58,6 +58,31 @@ class CriticNetwork(PytorchNetwork):
         return the value of the observation
         '''
         raise NotImplementedError()
+
+class SmallActorNetwork(ActorNetwork):
+    def __init__(self,shape:tuple,n_actions:int,fc_dims=128,n_layers=2) -> None:
+        super().__init__()
+        assert n_layers >= 1
+        self.pi_head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(shape[0]*shape[1],fc_dims),
+            nn.ReLU()
+        )
+        for _ in range(n_layers-1):
+            self.pi_head.append(nn.Linear(fc_dims,fc_dims))
+            self.pi_head.append(nn.ReLU())
+
+        self.pi_head.append(nn.Linear(fc_dims,n_actions))
+        self.pi_head.to("cuda:0" if T.cuda.is_available() else "cpu")
+    
+    def forward(self,observations: T.Tensor)->tuple[T.Tensor,T.Tensor]:
+        logits : T.Tensor= self.pi_head(observations)
+        probs = logits.softmax(dim=-1)
+        return probs,logits
+    
+    def predict(self, observation: T.Tensor) -> tuple[T.Tensor, T.Tensor]:
+        return self(observation)
+
         
 class ActorLinNetwork(ActorNetwork):
     def __init__(self,shape:tuple,n_actions:int,fc_dims=512,n_blocks=5) -> None:
@@ -429,7 +454,7 @@ class SqueezeAndExcite(nn.Module):
         return output
 
 
-class RnadNetwork(nn.Module):
+class RnadNetwork(PytorchNetwork):
     def __init__(self, shape: tuple, n_actions: int, fc_dims=512, blocks=3) -> None:
         super().__init__()
         if len(shape) > 2:
@@ -477,8 +502,6 @@ class RnadNetwork(nn.Module):
     def forward(self, state: T.Tensor) -> tuple[T.Tensor, T.Tensor, T.Tensor, T.Tensor]:
         shared: T.Tensor = self._shared(state)
         logits: T.Tensor = self._pi_head(shared)
-        # logits = logits*2
-        # logits = logits.clamp(-2,2)
         v = self._v_head(shared)
         probs = logits.softmax(dim=-1)
         return probs, v, probs.log(), logits

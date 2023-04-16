@@ -103,7 +103,7 @@ class PPG():
 
             self.log_dict[Phases.GLOBAL]["Current Step"] = f"{total_steps} of {self._max_steps}"
             self.log_dict[Phases.GLOBAL]["Completed"] = f"{total_steps*100/ self._max_steps:0.3} %"
-            self.log_dict[Phases.GLOBAL]["Total Duration"] = f"{time.perf_counter() - t_start}"
+            self.log_dict[Phases.GLOBAL]["Total Duration"] = f"{int(time.perf_counter() - t_start)}"
             self.log_dict[Phases.GLOBAL]["FPS"] = f"{total_steps// (time.perf_counter() - t_start)}"
 
             self._run_aux_phase()
@@ -227,11 +227,10 @@ class PPG():
         if current_steps < next_log:
             return next_log
         
-        print("\n")
         print("*" * 60)
         for phase_n in self.log_dict:
             for title in self.log_dict[phase_n]:
-                print(f"{phase_n.name}::{title}:: {self.log_dict[phase_n][title]}")
+                print(f"[INFO] {phase_n.name}::{title}:: {self.log_dict[phase_n][title]}")
         print("*" * 60)
         print("\n")
 
