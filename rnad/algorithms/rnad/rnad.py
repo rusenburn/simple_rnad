@@ -85,6 +85,7 @@ class Rnad():
         self.optim = T.optim.Adam(self.network.parameters(), lr=self.lr)
         # self.optim_scheduler = T.optim.lr_scheduler.LinearLR(,)
         self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        print(f"Device in using is {self.device}")
         self.n_game_actions = self._game_fn().n_actions
         self.log_dict = {Logs.PolicyLoss: [],
                          Logs.CriticLoss: [], Logs.ExplainedVariance: []}
@@ -135,26 +136,10 @@ class Rnad():
             self.reg_networks.load_state_dict(self.target_network.state_dict())
             self.m += 1
             print(f"[INFO] Updating networks m:{self.m}")
-        # all_observations: list[np.ndarray] = []
-        # all_actions: list[np.ndarray] = []
-        # all_action_mask: list[np.ndarray] = []
-        # all_v_t: list[np.ndarray] = []
-        # all_adv_pi: list[np.ndarray] = []
-        # for episode_examples in self.replay_buffer:
-        #     observations, actions, action_mask, v_t, adv_pi = self._extract_training_examples(
-        #         episode_examples, alpha)
-        #     all_observations.append(observations)
-        #     all_actions.append(actions)
-        #     all_action_mask.append(action_mask)
-        #     all_v_t.append(v_t)
-        #     all_adv_pi.append(adv_pi)
         all_observations,all_actions,all_action_mask,all_v_t,all_adv_pi = self._extract_all_training_examples(self.replay_buffer,alpha)
         n_examples, = all_actions.shape
-        # actor_loss, critic_loss, explained_variance = self._update_params(all_observations, all_actions,
-        #                                                                   all_action_mask, all_v_t, all_adv_pi)
         actor_loss, critic_loss, explained_variance = self._update_params(all_observations, all_actions,
                                                                           all_action_mask, all_v_t, all_adv_pi)
-        
         self.log_dict[Logs.PolicyLoss].append(actor_loss)
         self.log_dict[Logs.CriticLoss].append(critic_loss)
         self.log_dict[Logs.ExplainedVariance].append(explained_variance)
@@ -167,8 +152,11 @@ class Rnad():
             m = Match(self._game_fn, player_1=p1, player_2=p2, n_sets=50)
             s = m.start()
             win_ratio = (s[0]*2 + s[1]) / (s.sum()*2)
-            # print(f"{s} win ratio vs random = {win_ratio}")
-            # print(f"Actor Steps: {self.actor_steps}")
+            
+            p1 = NNPlayer(self.reg_networks)
+            m_reg = Match(self._game_fn, player_1=p1, player_2=p2, n_sets=50)
+            s_reg = m_reg.start()
+            win_ratio_reg = (s_reg[0]*2 + s_reg[1]) / (s_reg.sum()*2)
             T.save(self.network.state_dict(), os.path.join(
                 "tmp", f"{self.save_name}_rnad.pt"))
 
@@ -195,6 +183,7 @@ class Rnad():
             print(f"[INFO] Alpha : {alpha:0.3f}")
             print(f"[INFO] Eta : {self.current_eta:0.3f}")
             print(f"[INFO] Win Ratio : {win_ratio:0.3f} {s}")
+            print(f"[INFO] Win Ratio Reg : {win_ratio_reg:0.3f} {s_reg}")
             print("*********************************************\n")
 
     def _entropy_schedule(self, learner_steps: int):
@@ -381,19 +370,12 @@ class Rnad():
         return new_states, new_ids, rewards , terminals
 
     def _update_params(self, observations: np.ndarray, actions: np.ndarray, action_masks: np.ndarray, v_t: np.ndarray, adv_pi: np.ndarray):
-        # observations_ar = np.concatenate(observations, axis=0)
-        # actions_ar = np.concatenate(actions, axis=0)
-        # action_masks_ar = np.concatenate(action_masks, axis=0)
-        # v_t_ar = np.concatenate(v_t, axis=0)
+        
         observations_ar = observations
         actions_ar = actions
         action_masks_ar = action_masks
         v_t_ar = v_t
         adv_pi_ar = adv_pi
-        # if isinstance(adv_pi,list):
-        #     adv_pi_ar = np.concatenate(adv_pi, axis=0)
-        # else:
-        #     adv_pi_ar = adv_pi
 
         # TODO CHECK
         one_hot_actions_ar = np.zeros(
@@ -418,6 +400,7 @@ class Rnad():
         critic_losses: list[T.Tensor] = []
         for epoch in range(n_epochs):
             self.optim.zero_grad()
+            t = []
             for i in range(n_batches):
                 batch_idx = np.random.choice(
                     n_examples, batch_size, replace=True)
@@ -440,8 +423,6 @@ class Rnad():
                 probs: T.Tensor = probs * action_mask_batch
                 probs = probs/probs.sum(dim=-1, keepdim=True)
                 dist = T.distributions.Categorical(probs)
-                # l = dist.logits
-                # played_logits = logits -  T.mean(logits * action_mask_batch , dim=-1,keepdim=True)
                 played_logits = logits[:]
                 with T.no_grad():
                     thresh_center = T.zeros_like(played_logits)
@@ -456,12 +437,11 @@ class Rnad():
                 actor_loss = -weighted_logits.sum(dim=-1).mean()
 
                 total_loss = (critic_loss + actor_loss)
-                # self.optim.zero_grad()
-                total_loss.backward()
+                t.append(total_loss)
                 actor_losses.append(actor_loss)
                 critic_losses.append(critic_loss)
-                # clip_grad_value_(self.network.parameters(), 10000)
-                # self.optim.step()
+            t_loss = T.stack(t,dim=0).sum()
+            t_loss.backward()
             clip_grad_value_(self.network.parameters(), self.grad_clipping)
             self.optim.step()
 

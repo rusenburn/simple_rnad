@@ -61,16 +61,19 @@ def train_goof_using_rnad():
     rnad = Rnad(lambda:GoofSpielGame(),
                 save_name="goof",
                 n_steps=2*10**6,
-                eta=1,
-                eta_end=0.05,
+                eta=0.2,
                 lr=5e-5,
                 n_epochs=4,
+                delta_m=150_000,
                 gamma_avg=0.001)
     rnad.run()
 
 
 def train_pttc_using_rnad():
-    rnad = Rnad(lambda:PhantomTicTacToeGame())
+    rnad = Rnad(lambda:PhantomTicTacToeGame(),n_epochs=1,
+                n_steps=10_000_000,
+                delta_m=300_000,
+                test_intervals=50_000)
     rnad.run()
 
 def train_kuhn_using_rnad():
@@ -86,6 +89,8 @@ def train_othello_using_rnad():
                 n_steps=2*10**6,
                 eta=0.1,
                 save_name="othello",
+                n_epochs=1,
+                n_episodes=8,
                 lr=5e-5)
     rnad.run()
 def train_kuhn_poker_using_ppo():
@@ -228,12 +233,32 @@ def train_leduc_poker_using_ppg():
         save_name="leduc_ppg")
     ppg.run()
 
+def match_leduc_players():
+    game_fn = lambda:LeducPokerGame()
+    game = game_fn()
+    device = "cuda:0" if T.cuda.is_available() else "cpu"
+    net_0s = [SmallActorNetwork(game.observation_space,game.n_actions,n_layers=2).to(device) for _ in range(2)]
+    net_0s[0].load_model(os.path.join("tmp","leduc_ppg_0_actor.pt"))
+    net_0s[1].load_model(os.path.join("tmp","leduc_ppg_1_actor.pt"))
 
+    p0 = TurnBasedNNPlayer(net_0s)
+
+    
+    net_1 = RnadNetwork(game.observation_space,game.n_actions,blocks=5).to(device)
+    net_1.load_model(os.path.join("tmp","leduc_rnad_rnad.pt"))
+
+    p1 = NNPlayer(net_1)
+
+    m = Match(game_fn,p0,p1,5000,False)
+    score = m.start()
+    print(score)
+    
 def train_leduc_poker_using_rnad():
-    game_fns = [lambda:LeducPokerGame() for _ in range(8)]
-    game = game_fns[0]()
+    game_fns = [lambda:LeducPokerGame() for _ in range(32)]
     rnad = Rnad(game_fn=game_fns[0],lr=5e-5,
                 save_name="leduc_rnad",
+                n_epochs=4,
+                delta_m=150_000,
                 test_intervals=50000)
     rnad.run()
 def match_trix_players():
@@ -370,7 +395,7 @@ def main():
     # train_goof_using_past_ppo()
     # match_goof_players()
     # train_goof_using_rnad()
-    # train_pttc_using_rnad()
+    train_pttc_using_rnad()
     # train_kuhn_using_rnad()
     # train_othello_using_rnad()
     # train_goof_using_two_ppo()
@@ -386,7 +411,8 @@ def main():
     # match_trix_players()
     # train_using_ppg()
     # train_kuhn_using_neurd_ppg()
-    train_leduc_poker_using_ppg()
+    # train_leduc_poker_using_ppg()
+    # match_leduc_players()
     # train_leduc_poker_using_rnad()
 
 if __name__ == "__main__":

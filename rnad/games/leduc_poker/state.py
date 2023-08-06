@@ -355,7 +355,46 @@ class LeducPokerState(State):
         raise NotImplementedError()
 
     def render(self, full: bool):
-        raise NotImplementedError()
+        player = self.player_turn
+        
+        p0 ,p1,dd= 15,15,0
+        
+        if player == 0:
+            card = self._board[0][0]
+            player_0 = " " * 5 + f"{card.name}"
+            player_1 = " " *5 + "?"
+            player_1_action = self._last_action
+            player_0_action = None
+        else:
+            card = self._board[1][0]
+            player_0 = " " * 5 + "?"
+            player_1 = " " * 5 + f"{card.name}"
+            player_1_action = None
+            player_0_action =  self._last_action
+        
+        rp0 , rp1 , d = self._money
+        player_0_money = p0+rp0
+        player_1_money = p1+rp1
+        deck_money = d
+        floor = self._board[2]
+        floor_card = " "
+        if len(floor) > 0:
+            floor_card = floor[0].name
+        
+        print("*"*10)
+        print(player_1)
+        print(" "*5 + f"{player_1_money}$" + " "*5 +  (player_1_action.name if player_1_action is not None else ""))
+        print(" "*5 + f"{floor_card}" + " "*2 + f"{deck_money}$")
+        print(" "*5 + f"{player_0_money}$" + " "*5 +  (player_0_action.name if player_0_action is not None else ""))
+        print(player_0)
+
+        legal_actions = self.legal_actions_masks() if not self.is_terminal() else np.zeros((len(ACTIONS),),dtype=np.int32)
+        pr = ""
+        for i,a in enumerate(ACTIONS):
+            if legal_actions[i] == 1:
+                pr += f"{a.name}:{a.value}\t"
+        print(pr)
+        
 
     def _bet(self, player: int, money: tuple[int, int, int], bet_amount: int):
         p0, p1, d = money
