@@ -59,6 +59,17 @@ class CriticNetwork(PytorchNetwork):
         '''
         raise NotImplementedError()
 
+
+class StateActionNetwork(PytorchNetwork):
+    def __init__(self) -> None:
+        super().__init__()
+    
+    def evaluate(self,observation:T.Tensor)->T.Tensor:
+        '''
+        return state-action values
+        '''
+        raise NotImplementedError()
+
 class SmallActorNetwork(ActorNetwork):
     def __init__(self,shape:tuple,n_actions:int,fc_dims=128,n_layers=2) -> None:
         super().__init__()
@@ -152,6 +163,9 @@ class ActorLinearNetwork(PytorchNetwork):
         logits: T.Tensor = self._pi_head(state)
         probs = logits.softmax(dim=-1)
         return probs
+
+    def predict(self,state:T.Tensor)->T.Tensor:
+        return self(state)
 
 
 class ActorClippedLinearNetwork(PytorchNetwork):
@@ -283,9 +297,11 @@ class ActorResNetwork(PytorchNetwork):
     def forward(self, state: T.Tensor) -> T.Tensor:
         shared: T.Tensor = self._shared(state)
         pi: T.Tensor = self._pi_head(shared)
-        # pi = pi.clamp(-3,3)
         probs: T.Tensor = pi.softmax(dim=-1)
         return probs
+
+    def predict(self,state:T.Tensor)->T.Tensor:
+        return self(state)
 
 
 class ClippedActorResNetwork(PytorchNetwork):
@@ -505,3 +521,90 @@ class RnadNetwork(PytorchNetwork):
         v = self._v_head(shared)
         probs = logits.softmax(dim=-1)
         return probs, v, probs.log(), logits
+
+
+class StateActionResNetwork(StateActionNetwork):
+    def __init__(self,
+                 shape: tuple,
+                 n_actions:int,
+                 filters=128,
+                 fc_dims=512,
+                 n_blocks=3):
+
+        super().__init__()
+        self._blocks = nn.ModuleList(
+            [ResBlock(filters) for _ in range(n_blocks)])
+
+        if shape[1] == 64:
+            self._shared = nn.Sequential(
+                nn.Conv2d(shape[0], filters, 8, 4, 0),
+                *self._blocks)
+            shape = shape[0], 15, 13
+        else:
+            self._shared = nn.Sequential(
+            nn.Conv2d(shape[0], filters, 3, 1, 1),
+            *self._blocks)
+
+        self._advantages_head = nn.Sequential(
+            nn.Conv2d(filters, filters, 3, 1, 1),
+            nn.Flatten(),
+            nn.Linear(shape[1]*shape[2]*filters, fc_dims),
+            nn.ReLU(),
+            nn.Linear(fc_dims, n_actions),)
+        self._value_head = nn.Sequential(
+            nn.Conv2d(filters, filters, 3, 1, 1),
+            nn.Flatten(),
+            nn.Linear(shape[1]*shape[2]*filters, fc_dims),
+            nn.ReLU(),
+            nn.Linear(fc_dims, 1),
+        )
+
+        device = T.device('cuda:0' if T.cuda.is_available() else 'cpu')
+        self._blocks.to(device)
+        self._shared.to(device)
+        self._advantages_head.to(device)
+        self._value_head.to(device)
+
+    def forward(self, state: T.Tensor) -> T.Tensor:
+        shared: T.Tensor = self._shared(state)
+        advs :T.Tensor = self._advantages_head(shared)
+        advs = advs - advs.mean()
+        value: T.Tensor = self._value_head(shared)
+        qsa = value + advs
+        return qsa
+
+    def evaluate(self, observation: T.Tensor) -> T.Tensor:
+        return self(observation)
+
+class StateActionLinearNetwork(StateActionNetwork):
+    def __init__(self, shape: tuple, n_actions: int, fc_dims=512, blocks=3) -> None:
+        super().__init__()
+
+        self._blocks = nn.ModuleList(
+            [LinearBlock(fc_dims) for _ in range(blocks)])
+
+        self._shared = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(shape[0]*shape[1], fc_dims),
+            nn.ReLU(),
+            *self._blocks,
+            nn.Linear(fc_dims, fc_dims),
+            nn.ReLU())
+        self._advs_head = nn.Linear(fc_dims, n_actions)
+        self._v_head = nn.Sequential(nn.Linear(fc_dims,1))
+
+        self._device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
+        self._shared.to(self._device)
+        self._advs_head.to(self._device)
+        self._v_head.to(self._device)
+
+    def forward(self, state: T.Tensor) -> T.Tensor:
+        shared: T.Tensor = self._shared(state)
+        advs :T.Tensor= self._advs_head(shared)
+        advs = advs - advs.mean(dim=-1,keepdim=True)
+        v:T.Tensor = self._v_head(shared)
+        qsa = v + advs
+        return qsa
+
+    def evaluate(self, observation: T.Tensor) -> T.Tensor:
+        return self(observation)

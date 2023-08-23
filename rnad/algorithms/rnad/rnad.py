@@ -21,7 +21,7 @@ class Rnad():
     def __init__(self,
                  game_fn: Callable[[], Game],
                  #
-                 n_steps=1000_000,
+                 n_steps=1_000_000,
                  # reward_transformation
                  delta_m=75_000,
                  eta=0.2,
@@ -47,6 +47,7 @@ class Rnad():
                  # testing
                  test_intervals=20000,
                  save_name="",
+                 load_name=""
                  ) -> None:
 
         # general
@@ -85,13 +86,14 @@ class Rnad():
         self.optim = T.optim.Adam(self.network.parameters(), lr=self.lr)
         # self.optim_scheduler = T.optim.lr_scheduler.LinearLR(,)
         self.device = T.device("cuda:0" if T.cuda.is_available() else "cpu")
-        print(f"Device in using is {self.device}")
+        print(f"Device in use is {self.device}")
         self.n_game_actions = self._game_fn().n_actions
         self.log_dict = {Logs.PolicyLoss: [],
                          Logs.CriticLoss: [], Logs.ExplainedVariance: []}
         self.replay_buffer: deque[Sequence[Example]] = deque(
             maxlen=self.n_replays * self.n_actors)
         self.save_name = save_name
+        self.load_name = load_name
 
         self.network.to(self.device)
         self.target_network.to(self.device)
@@ -121,6 +123,11 @@ class Rnad():
         return network, target_network, reg_network, prev_preg_network
 
     def run(self) -> None:
+        if self.load_name:
+            self.load_data()
+
+        # incase of loading or running this method multiple times
+        self.n_steps_min += self.actor_steps
         self.t_start = time.perf_counter()
         while self.actor_steps < self.n_steps_min:
             self.step()
@@ -136,7 +143,8 @@ class Rnad():
             self.reg_networks.load_state_dict(self.target_network.state_dict())
             self.m += 1
             print(f"[INFO] Updating networks m:{self.m}")
-        all_observations,all_actions,all_action_mask,all_v_t,all_adv_pi = self._extract_all_training_examples(self.replay_buffer,alpha)
+        all_observations, all_actions, all_action_mask, all_v_t, all_adv_pi = self._extract_all_training_examples(
+            self.replay_buffer, alpha)
         n_examples, = all_actions.shape
         actor_loss, critic_loss, explained_variance = self._update_params(all_observations, all_actions,
                                                                           all_action_mask, all_v_t, all_adv_pi)
@@ -152,15 +160,16 @@ class Rnad():
             m = Match(self._game_fn, player_1=p1, player_2=p2, n_sets=50)
             s = m.start()
             win_ratio = (s[0]*2 + s[1]) / (s.sum()*2)
-            
+
             p1 = NNPlayer(self.reg_networks)
             m_reg = Match(self._game_fn, player_1=p1, player_2=p2, n_sets=50)
             s_reg = m_reg.start()
             win_ratio_reg = (s_reg[0]*2 + s_reg[1]) / (s_reg.sum()*2)
             T.save(self.network.state_dict(), os.path.join(
                 "tmp", f"{self.save_name}_rnad.pt"))
-
+            self.save_data()
             duration = time.perf_counter() - self.t_start
+
             fps = self.actor_steps // duration
             actor_loss_mean = np.mean(self.log_dict[Logs.PolicyLoss])
             critic_loss_mean = np.mean(self.log_dict[Logs.CriticLoss])
@@ -174,7 +183,8 @@ class Rnad():
             print(f"[INFO] Critic Loss : {critic_loss_mean:0.3f}")
             print(
                 f"[INFO] Explained Variance : {explained_variance_mean:0.3f}")
-            print(f"[INFO] Actor Steps : {self.actor_steps} of {self.n_steps_min}")
+            print(
+                f"[INFO] Actor Steps : {self.actor_steps} of {self.n_steps_min}")
             print(f"[INFO] Learner Steps : {self.learner_steps}")
             print(f"[INFO] FPS : {fps}")
             print(f"[INFO] Duration : {int(duration)} seconds")
@@ -188,13 +198,13 @@ class Rnad():
 
     def _entropy_schedule(self, learner_steps: int):
         update_network = False
-        while self.actor_steps- self.last_step > self.delta_m:
+        while self.actor_steps - self.last_step > self.delta_m:
             update_network = True
             self.last_step = self.last_step + self.delta_m
 
         delta = self.actor_steps - self.last_step
         alpha = delta / self.delta_m
-        alpha = min(1,alpha)
+        alpha = min(1, alpha)
         return alpha, update_network
 
     def _extract_training_examples(self, episode_examples: Sequence["Example"], alpha: float):
@@ -251,8 +261,9 @@ class Rnad():
         adv_pi = self._calculate_adv_pi(q_t, probs_ar, action_mask)
         return observations, actions, action_mask, v_t, adv_pi
 
-    def _extract_all_training_examples(self,all_examples:Sequence[Sequence['Example']],alpha:float):
-        observations = np.array([ex.state.to_player_obs() for exs in all_examples  for ex in exs])
+    def _extract_all_training_examples(self, all_examples: Sequence[Sequence['Example']], alpha: float):
+        observations = np.array([ex.state.to_player_obs()
+                                for exs in all_examples for ex in exs])
         players: np.ndarray = np.array(
             [ex.state.player_turn for episode_examples in all_examples for ex in episode_examples], dtype=np.int32)
         actions: np.ndarray = np.array(
@@ -263,10 +274,13 @@ class Rnad():
             [ex.rewards for episode_examples in all_examples for ex in episode_examples], dtype=np.float32)
         action_mask: np.ndarray = np.array(
             [ex.state.legal_actions_masks() for episode_examples in all_examples for ex in episode_examples])
-        states = [ex.state for episode_examples in all_examples for ex in episode_examples]
-        terminals = np.array([ex.terminal for episode_examples in all_examples for ex in episode_examples],dtype=np.bool8)
+        states = [
+            ex.state for episode_examples in all_examples for ex in episode_examples]
+        terminals = np.array(
+            [ex.terminal for episode_examples in all_examples for ex in episode_examples], dtype=np.bool8)
 
-        observations_t : T.Tensor = T.tensor(observations,dtype=T.float32,device=self.device)
+        observations_t: T.Tensor = T.tensor(
+            observations, dtype=T.float32, device=self.device)
 
         with T.no_grad():
             probs, v, _, logit = self.network(observations_t)
@@ -287,7 +301,7 @@ class Rnad():
         prob_reg_ar, log_prob_reg = self._to_legal_actions_probs(
             prob_reg_ar, action_mask)
         prob_reg_prev_reg_ar, log_prob_prev_reg = self._to_legal_actions_probs(
-            prob_reg_prev_reg_ar, action_mask)  
+            prob_reg_prev_reg_ar, action_mask)
 
         log_prob_reg_ar = log_probs - \
             (alpha*log_prob_reg + (1-alpha)*log_prob_prev_reg)
@@ -297,11 +311,10 @@ class Rnad():
         v_ar = v.squeeze().cpu().numpy()
 
         v_t, q_t = self._calculate_v_trace_all(
-            v_target_ar, states, probs_ar, actor_probs, log_prob_reg_ar, rewards, actions, players,terminals)
-        
+            v_target_ar, states, probs_ar, actor_probs, log_prob_reg_ar, rewards, actions, players, terminals)
         adv_pi = self._calculate_adv_pi(q_t, probs_ar, action_mask)
         return observations, actions, action_mask, v_t, adv_pi
-        
+
     def _collect_data(self) -> Sequence[Sequence['Example']]:
         examples: list[list[Example]] = [[] for _ in range(self.n_actors)]
         games = [self._game_fn() for _ in range(self.n_actors)]
@@ -311,7 +324,7 @@ class Rnad():
         # histories = [deque(maxlen=20) for _ in range(self.n_actors)]
         while episode_step < self._trajectory_max and len(states) > 0:
             actions, policies = self._choose_actions(states)
-            new_states, new_ids, rewards ,terminals= self._apply_actions(
+            new_states, new_ids, rewards, terminals = self._apply_actions(
                 states, ids, actions)
             id_: int
             state: State
@@ -319,7 +332,7 @@ class Rnad():
             action_h: np.ndarray
             probs: np.ndarray
             reward: np.ndarray
-            for state, id_, action, probs, reward , terminal in zip(states, ids, actions, policies, rewards ,terminals):
+            for state, id_, action, probs, reward, terminal in zip(states, ids, actions, policies, rewards, terminals):
                 examples[id_].append(
                     Example(
                         state=state,
@@ -328,7 +341,7 @@ class Rnad():
                         probs=probs,
                         rewards=reward,
                         terminal=terminal
-                        ))
+                    ))
             states, ids = new_states, new_ids
         return examples
 
@@ -354,7 +367,7 @@ class Rnad():
         new_states: Sequence[State] = []
         rewards: list[np.ndarray] = []
         new_ids: list[int] = []
-        terminals:list[int]=[]
+        terminals: list[int] = []
         for state, id_, action in zip(states, ids, actions):
             new_state = state.step(action)
             self.actor_steps += 1
@@ -367,10 +380,10 @@ class Rnad():
                 new_ids.append(id_)
                 terminals.append(False)
             rewards.append(reward)
-        return new_states, new_ids, rewards , terminals
+        return new_states, new_ids, rewards, terminals
 
     def _update_params(self, observations: np.ndarray, actions: np.ndarray, action_masks: np.ndarray, v_t: np.ndarray, adv_pi: np.ndarray):
-        
+
         observations_ar = observations
         actions_ar = actions
         action_masks_ar = action_masks
@@ -440,7 +453,7 @@ class Rnad():
                 t.append(total_loss)
                 actor_losses.append(actor_loss)
                 critic_losses.append(critic_loss)
-            t_loss = T.stack(t,dim=0).sum()
+            t_loss = T.stack(t, dim=0).sum()
             t_loss.backward()
             clip_grad_value_(self.network.parameters(), self.grad_clipping)
             self.optim.step()
@@ -448,7 +461,7 @@ class Rnad():
         with T.no_grad():
             for target_p, network_p in zip(self.target_network.parameters(), self.network.parameters()):
                 target_p.data.copy_(self.gamma_avg * network_p.data +
-                               (1-self.gamma_avg)*target_p.data)
+                                    (1-self.gamma_avg)*target_p.data)
         mean_actor_loss = T.mean(T.stack(actor_losses, dim=0))
         mean_critic_loss = T.mean(T.stack(critic_losses, dim=0))
         mean_explained_variances = T.mean(T.stack(explained_variances, dim=0))
@@ -592,12 +605,12 @@ class Rnad():
             returns_arr[predicates] = player_returns[predicates]
             q_t_a_arr[predicates] = player_q_t_aaa[predicates]
         return returns_arr, q_t_a_arr
-    
-    def _calculate_v_trace_all(self, v_target: np.ndarray, states: Sequence[State], probs: np.ndarray, actor_probs: np.ndarray, log_prob_reg: np.ndarray,  rewards: np.ndarray, actions: np.ndarray, players: np.ndarray,terminals:np.ndarray):
+
+    def _calculate_v_trace_all(self, v_target: np.ndarray, states: Sequence[State], probs: np.ndarray, actor_probs: np.ndarray, log_prob_reg: np.ndarray,  rewards: np.ndarray, actions: np.ndarray, players: np.ndarray, terminals: np.ndarray):
         c_ = self.v_trace_c
         p_ = self.v_trace_p
         assert actor_probs.ndim == 2
-        n_examples ,n_actions = actor_probs.shape
+        n_examples, n_actions = actor_probs.shape
         assert len(v_target) == n_examples
         values = v_target
         n_players = 2
@@ -630,30 +643,36 @@ class Rnad():
             for t in reversed(range(n_examples)):
                 state = states[t]
                 current_player = players[t]
-                at= actions[t]
+                at = actions[t]
                 terminal = int(terminals[t])
                 assert current_player == state.player_turn
                 if state.player_turn != i:
-                    ratio = probs[t,at]/actor_probs[t,at]
-                    v_t_i_hat[t,i] = v_t_i_hat[t+1,i] * (1-terminal)
-                    V_next_i[t,i] = V_next_i[t+1,i] * (1-terminal)
-                    r_t_i_hat[t,i] = r_t_i[t,i] + ratio * r_t_i_hat[t+1,i] * (1-terminal)
-                    eta_t_i[t,i] = ratio * eta_t_i[t+1,i] if not terminal else 1
-                else: # current player
-                    ratio = probs[t,at]/actor_probs[t,at]
-                    pt = min(p_,ratio * eta_t_i[t+1,i] if not terminal else ratio)
-                    ct = min(c_,ratio * eta_t_i[t+1,i] if not terminal else ratio)
+                    ratio = probs[t, at]/actor_probs[t, at]
+                    v_t_i_hat[t, i] = v_t_i_hat[t+1, i] * (1-terminal)
+                    V_next_i[t, i] = V_next_i[t+1, i] * (1-terminal)
+                    r_t_i_hat[t, i] = r_t_i[t, i] + ratio * \
+                        r_t_i_hat[t+1, i] * (1-terminal)
+                    eta_t_i[t, i] = ratio * \
+                        eta_t_i[t+1, i] if not terminal else 1
+                else:  # current player
+                    ratio = probs[t, at]/actor_probs[t, at]
+                    pt = min(p_, ratio * eta_t_i[t+1, i]
+                             if not terminal else ratio)
+                    ct = min(c_, ratio * eta_t_i[t+1, i]
+                             if not terminal else ratio)
 
-                    delta_v_i = pt * (r_t_i[t,i] + ratio * r_t_i_hat[t+1,i] * (1-terminal) +
-                                      V_next_i[t+1,i]*(1-terminal) - values[t])
-                    v_t_i_hat[t,i] = values[t] + delta_v_i + ct*(v_t_i_hat[t+1,i] - V_next_i[t+1,i]) * (1-terminal)
-                    V_next_i[t,i] = values[t]
-                    extra = (mu_inv[t,at]* 
-                             (r_t_i[t,i] + eta*log_prob_reg[t,at] + ratio*(r_t_i_hat[t+1,i]+v_t_i_hat[t+1,i])*(1-terminal) - values[t]))
+                    delta_v_i = pt * (r_t_i[t, i] + ratio * r_t_i_hat[t+1, i] * (1-terminal) +
+                                      V_next_i[t+1, i]*(1-terminal) - values[t])
+                    v_t_i_hat[t, i] = values[t] + delta_v_i + ct * \
+                        (v_t_i_hat[t+1, i] - V_next_i[t+1, i]) * (1-terminal)
+                    V_next_i[t, i] = values[t]
+                    extra = (mu_inv[t, at] *
+                             (r_t_i[t, i] + eta*log_prob_reg[t, at] + ratio*(r_t_i_hat[t+1, i]+v_t_i_hat[t+1, i])*(1-terminal) - values[t]))
                     for a in range(n_actions):
-                        Q_t_i_aaaa_hat[t,i,a]=values[t] - eta*log_prob_reg[t,a]
-                    Q_t_i_aaaa_hat[t,i,at] +=extra
-        
+                        Q_t_i_aaaa_hat[t, i, a] = values[t] - \
+                            eta*log_prob_reg[t, a]
+                    Q_t_i_aaaa_hat[t, i, at] += extra
+
         player_0_predicates = players == 0
         player_1_predicates = players == 1
         v_t = np.zeros((n_examples,), dtype=np.float32)
@@ -664,6 +683,35 @@ class Rnad():
         q_t[player_1_predicates] = Q_t_i_aaaa_hat[:n_examples][player_1_predicates, 1]
         # TODO check
         return v_t, q_t
+
+    def load_data(self):
+        load_data = T.load(os.path.join(
+            "tmp", f"{self.load_name}_rnad_data.pt"))
+        self.network.load_state_dict(load_data["network"])
+        self.target_network.load_state_dict(load_data["target_network"])
+        self.reg_networks.load_state_dict(load_data["reg_network"])
+        self.prev_reg_networks.load_state_dict(load_data["prev_reg_network"])
+        self.optim.load_state_dict(load_data["optimizer"])
+        self.learner_steps = load_data["learner_steps"]
+        self.actor_steps = load_data["actor_steps"]
+        self.last_step = load_data["last_step"]
+        self.m = load_data["m"]
+
+    def save_data(self):
+        save_data = {
+            "network": self.network.state_dict(),
+            "target_network": self.target_network.state_dict(),
+            "reg_network": self.reg_networks.state_dict(),
+            "prev_reg_network": self.prev_reg_networks.state_dict(),
+            "optimizer": self.optim.state_dict(),
+            "learner_steps": self.learner_steps,
+            "actor_steps": self.actor_steps,
+            "last_step": self.last_step,
+            "m": self.m,
+        }
+        T.save(save_data, os.path.join(
+            "tmp", f"{self.save_name}_rnad_data.pt"))
+
     @staticmethod
     def _to_legal_actions_probs(probs: np.ndarray, legal_actions_masks: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         assert probs.shape == legal_actions_masks.shape
@@ -689,7 +737,7 @@ class Rnad():
         unexplained_var_ratio = (target-predictions).var() / target_var
         explained_var_ratio = 1 - unexplained_var_ratio
         return explained_var_ratio
-    
+
     @property
     def current_eta(self):
         eta = self.eta_initial * \
@@ -704,7 +752,7 @@ class Example():
     probs: np.ndarray
     rewards: np.ndarray
     action: int
-    terminal:bool
+    terminal: bool
 
 
 class Logs(enum.IntEnum):

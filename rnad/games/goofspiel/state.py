@@ -43,7 +43,7 @@ class GoofSpielState(State):
         #     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # player_0 probability of having that card
         #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # player_0 takes
         #     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # player_1 probability of having that card
-        #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # player_1 takes of having that card
+        #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # player_1 takes
         #     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # deck_remaining_cards
         #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],  # floor cards
         # ])
