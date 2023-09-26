@@ -108,10 +108,6 @@ class NFSP():
                 for _ in range(self.batches):
                     policy_loss = self.update_policy_network()
                     q_loss = self.update_network()
-                # if policy_loss is not None:
-                #     print(f"policy_loss {policy_loss}")
-                # if q_loss is not None:
-                #     print(f"q loss {q_loss}")
                 if self.n_updates > self.next_update:
                     self.next_update += self.update_interval
                     self.target.load_state_dict(self.network.state_dict())

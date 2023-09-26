@@ -11,6 +11,7 @@ from rnad.games.leduc_poker.game import LeducPokerGame
 from rnad.games.othello.game import OthelloGame
 from rnad.games.phantom_tictactoe.game import PhantomTicTacToeGame
 from rnad.games.goofspiel.game import GoofSpielGame
+from rnad.games.tictactoe.game import TicTacToeGame
 from rnad.games.trix.game import TrixGame
 from rnad.algorithms.ppo.ppo import PPO
 from rnad.algorithms.past_self.past_self import PastSelf
@@ -243,7 +244,10 @@ def train_leduc_using_nfsp():
     game_fn = lambda:LeducPokerGame()
     algo = NFSP(game_fn,batches=1,update_intervals=1,save_name="leduc1")
     algo.run()
-
+def train_goof_using_nfsp():
+    game_fn = lambda:GoofSpielGame()
+    algo = NFSP(game_fn,batches=1,update_intervals=1,save_name="goof")
+    algo.run()
 def match_leduc_players():
     game_fn = lambda:LeducPokerGame()
     game = game_fn()
@@ -284,6 +288,16 @@ def train_pttt_using_nfsp():
     game_fn = lambda:PhantomTicTacToeGame()
     algo = NFSP(game_fn,batches=1,update_intervals=1,save_name="pttc")
     algo.run()
+
+
+def train_tic_using_pastself():
+    ppo = PastSelf(
+        game_fns=[lambda:TicTacToeGame() for _ in range(8)],
+        total_steps=1_000_000,critic_coef=0.5,entropy_coef=.01,
+        testing_game_fn=lambda:TicTacToeGame(),
+        save_name="tic_past_ppo")
+    ppo.run()
+    ...
 def match_trix_players():
     game_fn = lambda : OthelloGame()
     game = game_fn()
@@ -364,18 +378,19 @@ def match_goof_players():
     game = game_fn()
     device = "cuda:0" if T.cuda.is_available() else "cpu"
 
-    nnets = tuple(ActorLinNetwork(game.observation_space,game.n_actions) for _ in range(2))
-    nnets[0].load_model(os.path.join("tmp","goof_spiel_ppg_0_actor.pt"))
-    nnets[1].load_model(os.path.join("tmp","goof_spiel_ppg_1_actor.pt"))
-    [net.to(device) for net in nnets]
+    # nnets = tuple(ActorLinNetwork(game.observation_space,game.n_actions) for _ in range(2))
+    # nnets[0].load_model(os.path.join("tmp","goof_spiel_ppg_0_actor.pt"))
+    # nnets[1].load_model(os.path.join("tmp","goof_spiel_ppg_1_actor.pt"))
+    # [net.to(device) for net in nnets]
     # player_1 = MultiNNplayer
-    # nnet_1 = ActorLinearNetwork(game.observation_space,game.n_actions).to(device)
-    # nnet_1.load_model(os.path.join("tmp","goof_actor.pt"))
+    nnet_1 = ActorLinearNetwork(game.observation_space,game.n_actions).to(device)
+    nnet_1.load_model(os.path.join("tmp","goof_nfsp.pt"))
     # nnet_1 = ActorClippedLinearNetwork(game.observation_space,game.n_actions).to(device)
     # nnet_1.load_model(os.path.join("tmp","twin_actor_1.pt"))
-    player_1 = TurnBasedNNPlayer(nnets)
+    
+    # player_1 = TurnBasedNNPlayer(nnets)
     # player_1 = RandomPlayer()
-    # player_2 = NNPlayer(nnet_1)
+    player_1 = NNPlayer(nnet_1)
     # player_1 = HumanPlayer(False)
 
     # nnet_2 = ActorClippedLinearNetwork(game.observation_space,game.n_actions).to(device)
@@ -414,6 +429,33 @@ def match_othello_players():
     m = Match(game_fn,player_1=player_0,player_2=player_1,n_sets=500)
     score = m.start()
     print(score)
+
+def match_tic_players():
+    game_fn = lambda:TicTacToeGame()
+    game = game_fn()
+    device = "cuda:0" if T.cuda.is_available() else "cpu"
+    # nnets = tuple((ActorRNetwork(game.observation_space,game.n_actions).to(device) for _ in range(2)))
+    # nnets[0].load_model(os.path.join("tmp","pttc_ppg_0_actor.pt"))
+    # nnets[1].load_model(os.path.join("tmp","pttc_ppg_1_actor.pt"))
+    nnet_1 = ActorResNetwork(game.observation_space,game.n_actions).to(device)
+    nnet_1.load_model(os.path.join("tmp","tic_past_ppo_actor.pt"))
+    # nnet_1.load_model(os.path.join("tmp","pttc_nfsp.pt"))
+    player_1 = NNPlayer(nnet_1)
+    # player_1 = TurnBasedNNPlayer(nnets)
+    # player_1 = RandomPlayer()
+    # player_2 = NNPlayer(nnet_1)
+    player_2 = HumanPlayer(False)
+
+    # nnet_2 = RnadNetwork(game.observation_space,game.n_actions,blocks=5).to(device)
+    # nnet_2 = ActorResNetwork(game.observation_space,game.n_actions).to(device)
+    # nnet_2.load_model(os.path.join("tmp","pttc_nfsp.pt"))
+    # nnet_2.load_model(os.path.join("tmp","pttt_rnad.pt"))
+    # player_2 = NNPlayer(nnet_2)
+    # player_2 = RandomPlayer()
+
+    match_ = Match(game_fn,player_1,player_2,100,False)
+    scores = match_.start()
+    print(scores)
 def main():
     # train_pttc_using_past_ppo()
     # train_pttc_using_ppo()
@@ -444,7 +486,10 @@ def main():
     # match_leduc_players()
     # train_leduc_poker_using_rnad()
     # train_pttt_using_nfsp()
-    train_leduc_using_nfsp()
+    # train_leduc_using_nfsp()
+    # train_goof_using_nfsp()
+    # train_tic_using_pastself()
+    match_tic_players()
 
 if __name__ == "__main__":
     main()
