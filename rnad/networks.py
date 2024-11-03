@@ -471,7 +471,7 @@ class SqueezeAndExcite(nn.Module):
 
 
 class RnadNetwork(PytorchNetwork):
-    def __init__(self, shape: tuple, n_actions: int, fc_dims=512, blocks=3) -> None:
+    def __init__(self, shape: tuple[int,int] | tuple[int,int,int], n_actions: int, fc_dims=512, blocks=3) -> None:
         super().__init__()
         if len(shape) > 2:
             filters = 128

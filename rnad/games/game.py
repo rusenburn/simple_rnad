@@ -84,7 +84,7 @@ class VecGame:
         new_legal_actions_masks = np.zeros((self.n_games,self._n_actions),dtype=np.int32)
         rewards = np.zeros((self._n_games, 2), dtype=np.float32)
         dones = np.zeros((self._n_games,), dtype=np.int32)
-        players = np.zeros((self._n_games), dtype=np.int32)
+        players = np.zeros((self._n_games,), dtype=np.int32)
         for i, (action, game) in enumerate(zip(actions, self.games)):
             # player = game.player_turn
             state = game.step(action)

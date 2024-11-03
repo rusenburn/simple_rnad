@@ -6,7 +6,7 @@ N_ROWS = 3
 N_COLS = 3
 N_ACTIONS = N_ROWS * N_COLS
 OBSERVATION_SPACE = (N_PLAYERS, N_ROWS, N_COLS)
-MAX_TURNS = 8
+MAX_TURNS = 9
 
 class TicTacToeState(State):
     '''
@@ -53,7 +53,7 @@ class TicTacToeState(State):
         player = self.player_turn
         opponent = 1 - self.player_turn
         masks = np.logical_and(self._board[player] == 0 , self._board[opponent]==0)
-        masks = masks.copy().flatten()
+        masks : np.ndarray = masks.copy().flatten()
         self._cached_legal_actions_masks = masks
         return self._cached_legal_actions_masks.copy()
 
